@@ -1,0 +1,5 @@
+*.gz
+Partation1
+*.json
+.vscode
+__pycache__
