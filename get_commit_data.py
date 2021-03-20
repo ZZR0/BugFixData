@@ -2,7 +2,7 @@ import pymongo
 from tqdm import tqdm
 import datetime
 import decamelize
-
+import os
 
 projects = ['jdt', 'platform', 'gerrit']
 afters = ['2014-01-01', '2016-01-01', '2016-01-01']
@@ -58,6 +58,13 @@ def process_data(chunks, labels):
     with open('bugfix/project/labels', 'w', encoding='utf-8') as f:
         f.writelines(int_label)
 
+def check_annotation(sentence):
+    sentence = sentence.strip().strip('\t').strip(' ')
+    if sentence.startswith('//') or sentence.startswith('/*') or sentence.startswith('*/') or sentence.startswith('*'):
+        return True
+
+    return False
+
 if __name__ == '__main__':
     all_chunks = [] # [chunk[line]]
     all_labels = []
@@ -87,9 +94,18 @@ if __name__ == '__main__':
                         chunk.append((line, code))
                     else:
                         chunk = [code[1] for code in chunk]
-                        all_chunks.append(chunk)
-                        all_labels.append('{}----{}----{}'.format(label, project, commit_id))
+                        new_chunk = []
+                        for code in chunk:
+                            if check_annotation(code): continue
+                            new_chunk.append(code)
+                        if new_chunk:
+                            all_chunks.append(new_chunk)
+                            all_labels.append('{}----{}----{}'.format(label, project, commit_id))
                         chunk = [(line, code)]
 
         chunks_list = chunk2list(all_chunks)
         process_data(chunks_list, all_labels)
+    
+    # os.system("scp bugfix/project/* cg@10.20.83.122:/data2/cg/BugFixData/bugfix/project/")
+    # os.system("scp bugfix/project/* cg@10.20.83.122:/data2/cg/NeuralCodeSum/data/bugfix/project/")
+    os.system("scp bugfix/project/* cg@10.20.83.122:/data2/cg/deep-code-search/data/bugfix/commit/")

@@ -200,8 +200,8 @@ if __name__ == "__main__":
     paths = subprocess.check_output(['ls', 'Partation1'])
     paths = paths.decode('utf-8').strip().split('\n')
 
-    for path in tqdm(paths[:1000]):
-        process_one_bugfix('Partation1/{}/'.format(path))
+    # for path in tqdm(paths[:1000]):
+    #     process_one_bugfix('Partation1/{}/'.format(path))
 
     combine_data(paths[:1000], bug_file, fix_file)
 
