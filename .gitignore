@@ -1,5 +1,11 @@
 *.gz
 Partation1
+Partation2
+Partation3
+Partation4
+Partation5
+bugfix
 *.json
 .vscode
 __pycache__
+*.txt
