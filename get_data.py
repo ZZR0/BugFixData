@@ -71,7 +71,10 @@ def chunk2list(one_chunks):
             line_nums = [line[0] for line in chunk]
             codes = [line[1] for line in chunk]
             line = ' DCNL '.join(codes)
-            line_number = str(line_nums[0]) if line_nums else ''
+            if line_nums:
+                line_number = str({'file':line_nums[0]['file'], 'start_line': line_nums[0]['line'], 'end_line': line_nums[-1]['line']})
+            else:
+                line_number = ''
             chunk_list.append(line + '\n')
             lines_list.append(line_number + '\n')
     
