@@ -5,6 +5,7 @@ from aggregator import aggregator
 from tqdm import tqdm
 import decamelize
 import random
+from astree import *
 
 random.seed(2021)
 diff_cmd = 'git diff {} {}'
@@ -62,19 +63,52 @@ def get_diff_chunk(bug_file, fix_file):
     
     return bug_chunks, fix_chunks
 
+
+def parser_ast(code, ast):
+    var_map = ast.variable
+    ast_code = [var_map[word] if word in var_map else word for word in code.split()]
+
+    return ' '.join(ast_code)
+
+
+def extract_code_ast(chunk, ast_cache):
+    file_path = chunk["file"].replace("buggy-version","buggy-ast")
+    code = chunk["code"]
+
+    if not file_path.endswith('.java'): return chunk["code"]
+
+    try:
+        ast = ast_cache.get(file_path)
+        if not ast:
+            ast = build_ast_from_file(file_path)
+            ast = extract_Variable(ast)
+
+            ast_cache.add(file_path, ast)
+        
+        return parser_ast(code, ast)
+    except:
+        print(f"Error In {file_path}")
+
+    return chunk["code"]
+
+
 def chunk2list(one_chunks):
     # one_chunks: [files [chunk [(num, line)] ] ]
     chunk_list = []
     lines_list = []
+    ast_cache = Cache()
     for file_chunk in one_chunks:
         for chunk in file_chunk:
             line_nums = [line[0] for line in chunk]
             codes = [line[1] for line in chunk]
             line = ' DCNL '.join(codes)
             if line_nums:
-                line_number = str({'file':line_nums[0]['file'], 
-                                   'start_line': line_nums[0]['line'], 
-                                   'end_line': line_nums[-1]['line']})
+                line_number = {'file':line_nums[0]['file'], 
+                               'start_line': line_nums[0]['line'], 
+                               'end_line': line_nums[-1]['line']}
+                chunk = {"file":line_nums[0]['file'], "code":line}
+                line_number["code_ast"] = extract_code_ast(chunk, ast_cache)
+                line_number = str(line_number)
             else:
                 line_number = ''
             chunk_list.append(line + '\n')
@@ -177,72 +211,6 @@ def clean_sentence(sentence):
     if len(sentence.split()) < 10: return ''
     return sentence
 
-def process_data(bug_file, fix_file, bug_loca_file, fix_loca_file):
-    with open(bug_file, 'r', encoding='utf-8') as f:
-        bug_data = f.readlines()
-    with open(fix_file, 'r', encoding='utf-8') as f:
-        fix_data = f.readlines()
-
-    with open(bug_loca_file, 'r', encoding='utf-8') as f:
-        bug_loca_data = f.readlines()
-    with open(fix_loca_file, 'r', encoding='utf-8') as f:
-        fix_loca_data = f.readlines()
-
-    process_bug, process_fix, process_bug_loca, process_fix_loca = [], [], [], []
-
-    for bug, fix, bug_loca, fix_loca in zip(bug_data, fix_data, bug_loca_data, fix_loca_data):
-        bug = clean_sentence(bug.strip())
-        fix = clean_sentence(fix.strip())
-
-        if bug:
-            process_bug.append(bug + '\n')
-            process_fix.append(fix + '\n')
-
-            process_bug_loca.append(bug_loca)
-            process_fix_loca.append(fix_loca)
-
-    # idx = int(len(process_bug) * 0.8)
-
-    # train_bug, test_bug = process_bug[:idx], process_bug[idx:]
-    # train_fix, test_fix = process_fix[:idx], process_fix[idx:]
-
-    input = process_bug + process_fix
-    target = process_fix + process_bug
-    label = ['1\n' for _ in range(len(process_bug))] + ['0\n' for _ in range(len(process_fix))]
-
-    data = list(zip(input, target, label))
-    random.shuffle(data)
-
-    input = [elem[0] for elem in data]
-    target = [elem[1] for elem in data]
-    label = [elem[2] for elem in data]
-
-    # print(label[:10])
-    with open('bugfix/train/code.original_subtoken', 'w', encoding='utf-8') as f:
-        f.writelines(input)
-    with open('bugfix/train/javadoc.original', 'w', encoding='utf-8') as f:
-        f.writelines(target)
-    with open('bugfix/train/labels', 'w', encoding='utf-8') as f:
-        f.writelines(label)
-
-    with open('bugfix/test/code.original_subtoken', 'w', encoding='utf-8') as f:
-        f.writelines(input)
-    with open('bugfix/test/javadoc.original', 'w', encoding='utf-8') as f:
-        f.writelines(target)
-    with open('bugfix/test/labels', 'w', encoding='utf-8') as f:
-        f.writelines(label)
-
-    with open('bugfix/dev/code.original_subtoken', 'w', encoding='utf-8') as f:
-        f.writelines(input[:100])
-    with open('bugfix/dev/javadoc.original', 'w', encoding='utf-8') as f:
-        f.writelines(target[:100])
-    with open('bugfix/dev/labels', 'w', encoding='utf-8') as f:
-        f.writelines(label[:100])
-
-
-def cp_data():
-    cmd = '\cp -r bugfix ../NeuralCodeSum/data/'
-    os.system(cmd)
 
 if __name__ == "__main__":
     bug_file, fix_file = 'bug_chunk.txt', 'fix_chunk.txt'
@@ -250,7 +218,9 @@ if __name__ == "__main__":
     os.system('rm {} {}'.format(bug_file, fix_file))
     os.system('rm {} {}'.format(bug_loca_file, fix_loca_file))
 
+    dataset_path = '../BugFixDataset/'
     pre_paths = ['Partation1', 'Partation2', 'Partation3', 'Partation4', 'Partation5']
+    pre_paths = [dataset_path+path for path in pre_paths]
     for pre_path in pre_paths:
         file_paths = subprocess.check_output(['ls', pre_path])
         file_paths = file_paths.decode('utf-8').strip().split('\n')
@@ -260,7 +230,3 @@ if __name__ == "__main__":
             process_one_bugfix('./{}/{}/'.format(pre_path, path))
 
         combine_data(pre_path, file_paths, bug_file, fix_file, bug_loca_file, fix_loca_file)
-
-    # process_data(bug_file, fix_file, bug_loca_file, fix_loca_file)
-
-    # cp_data()
