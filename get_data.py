@@ -1,10 +1,13 @@
 import subprocess
 import os
-import line_parser
+import re
+import random
+
+import decamelize
 from aggregator import aggregator
 from tqdm import tqdm
-import decamelize
-import random
+
+import line_parser
 from astree import *
 
 random.seed(2021)
@@ -47,13 +50,10 @@ def get_diff_chunk(bug_file, fix_file):
                     code = line['line'].strip()
                     line_number = line['from_line_number']
                     elem = ({'file':bug_file, 'line':line_number}, code.replace('\r', '').replace('\n', ''))
-                    is_code = not (code.startswith('*') or code.startswith('//') or code.startswith('/*'))
                     if line['action'] == 'delete':
-                        if is_code:
-                            bug.append(elem)
+                        bug.append(elem)
                     if line['action'] == 'add':
-                        if is_code:
-                            fix.append(elem)
+                        fix.append(elem)
 
                 if len(bug) == 0 or len(fix) == 0: continue
                 bug_chunks.append(bug)
@@ -92,29 +92,54 @@ def extract_code_ast(chunk, ast_cache):
     return chunk["code"]
 
 
+def process_code(code):
+    code_token = split_sentence(code).split()
+    docstring = clean_sentence(code)
+    docstring_tokens = docstring.split()
+
+    return code_token, docstring, docstring_tokens
+
+
 def chunk2list(one_chunks):
     # one_chunks: [files [chunk [(num, line)] ] ]
     chunk_list = []
-    lines_list = []
     ast_cache = Cache()
     for file_chunk in one_chunks:
         for chunk in file_chunk:
             line_nums = [line[0] for line in chunk]
             codes = [line[1] for line in chunk]
-            line = ' DCNL '.join(codes)
-            if line_nums:
-                line_number = {'file':line_nums[0]['file'], 
-                               'start_line': line_nums[0]['line'], 
-                               'end_line': line_nums[-1]['line']}
-                chunk = {"file":line_nums[0]['file'], "code":line}
-                line_number["code_ast"] = extract_code_ast(chunk, ast_cache)
-                line_number = str(line_number)
-            else:
-                line_number = ''
-            chunk_list.append(line + '\n')
-            lines_list.append(line_number + '\n')
+            code = ' '.join(codes)
+            code = remove_comments_and_docstrings(code)
+
+            code_token, docstring, docstring_tokens = process_code(code)
+            if not code_token or not docstring_tokens: continue
+
+            file = line_nums[0]['file']
+            start = line_nums[0]['line']
+            end = line_nums[-1]['line']
+            code_chunk = {"file": file, 
+                          "start_line": start, 
+                          "end_line": end,
+                          "code": code,
+                          "code_ast": "",
+                          "repo": "BugFix",
+                          "path": file,
+                          "func_name": "func_name",
+                          "original_string": code,
+                          "language": "java",
+                          "code": code,
+                          "code_tokens": code_token,
+                          "docstring": docstring,
+                          "docstring_tokens": docstring_tokens,
+                          "sha": "",
+                          "url": "{}---{}---{}".format(file, start, end),
+                          "partition": ""
+                        }
+            # line_number["code_ast"] = extract_code_ast(chunk, ast_cache)
+            code_chunk = json.dumps(code_chunk)
+            chunk_list.append(code_chunk + '\n')
     
-    return chunk_list, lines_list
+    return chunk_list
 
 
 def process_one_bugfix(path):
@@ -133,36 +158,24 @@ def process_one_bugfix(path):
         one_bug_chunks.append(bug_chunks)
         one_fix_chunks.append(fix_chunks)
 
-    bug_chunks_list, bug_lines_list = chunk2list(one_bug_chunks)
-    fix_chunks_list, fix_lines_list = chunk2list(one_fix_chunks)
+    bug_chunks_list = chunk2list(one_bug_chunks)
+    fix_chunks_list = chunk2list(one_fix_chunks)
 
     bug_output = path+'bug_chunk.txt'
     fix_output = path+'fix_chunk.txt'
-
-    bug_locat_output = path+'bug_location.txt'
-    fix_locat_output = path+'fix_location.txt'
 
     with open(bug_output, 'w', encoding='utf-8') as f:
         f.writelines(bug_chunks_list)
     with open(fix_output, 'w', encoding='utf-8') as f:
         f.writelines(fix_chunks_list)
-
-    with open(bug_locat_output, 'w', encoding='utf-8') as f:
-        f.writelines(bug_lines_list)
-    with open(fix_locat_output, 'w', encoding='utf-8') as f:
-        f.writelines(fix_lines_list)
     
 
-def combine_data(pre_path, paths, bug_output, fix_output, bug_loca_output, fix_loca_output):
+def combine_data(pre_path, paths, bug_output, fix_output):
     bug_data, fix_data = [], []
-    bug_loca_data, fix_loca_data = [], []
 
     for path in tqdm(paths):
         bug_file = './{}/{}/bug_chunk.txt'.format(pre_path, path)
         fix_file = './{}/{}/fix_chunk.txt'.format(pre_path, path)
-
-        bug_loca = './{}/{}/bug_location.txt'.format(pre_path, path)
-        fix_loca = './{}/{}/fix_location.txt'.format(pre_path, path)
 
         with open(bug_file, 'r', encoding='utf-8') as f:
             bug_lines = f.readlines()
@@ -171,27 +184,16 @@ def combine_data(pre_path, paths, bug_output, fix_output, bug_loca_output, fix_l
             fix_lines = f.readlines()
             fix_data.extend(fix_lines)
 
-        with open(bug_loca, 'r', encoding='utf-8') as f:
-            bug_lines = f.readlines()
-            bug_loca_data.extend(bug_lines)
-        with open(fix_loca, 'r', encoding='utf-8') as f:
-            fix_lines = f.readlines()
-            fix_loca_data.extend(fix_lines)
 
-    assert len(bug_data) == len(bug_loca_data)
     print(len(bug_data))
     with open(bug_output, 'a', encoding='utf-8') as f:
         f.writelines(bug_data)
     with open(fix_output, 'a', encoding='utf-8') as f:
         f.writelines(fix_data)
 
-    with open(bug_loca_output, 'a', encoding='utf-8') as f:
-        f.writelines(bug_loca_data)
-    with open(fix_loca_output, 'a', encoding='utf-8') as f:
-        f.writelines(fix_loca_data)
 
 def split_sentence(sentence):
-    sentence = sentence.replace('.', ' . ').replace('_', ' ').replace('@', ' @ ')\
+    sentence = sentence.replace('.', ' . ').replace('@', ' @ ')\
         .replace('-', ' - ').replace('~', ' ~ ').replace('%', ' % ').replace('^', ' ^ ')\
         .replace('&', ' & ').replace('*', ' * ').replace('(', ' ( ').replace(')', ' ) ')\
         .replace('+', ' + ').replace('=', ' = ').replace('{', ' { ').replace('}', ' } ')\
@@ -201,22 +203,73 @@ def split_sentence(sentence):
     sentence = ' '.join(sentence.split())
     return sentence
 
+def get_tokens(sentence):
+    tokens = []
+    sentence = sentence.split()
+    for word in sentence:
+        if word.isalpha():
+            tokens.append(word)
+
+    if all([word == 'dcnl' for word in tokens]):
+        return ''
+
+    return ' '.join(tokens)
+
 def clean_sentence(sentence):
     if not sentence.isascii(): return ''
     sentence = split_sentence(sentence)
     sentence = sentence.split()
     sentence = [decamelize.convert(word) for word in sentence]
+    if len(sentence) < 3: return ''
     sentence = ' '.join(sentence)
-    sentence = sentence.replace('_', ' ')
-    if len(sentence.split()) < 10: return ''
+    sentence = sentence.replace("_", " ")
+    sentence = get_tokens(sentence)
     return sentence
+
+def remove_comments_and_docstrings(source):
+    def replacer(match):
+        s = match.group(0)
+        if s.startswith('/'):
+            return " " # note: a space and not an empty string
+        else:
+            return s
+    pattern = re.compile(
+        r'//.*?$|/\*.*?\*/|\'(?:\\.|[^\\\'])*\'|"(?:\\.|[^\\"])*"',
+        re.DOTALL | re.MULTILINE
+    )
+    temp=[]
+    for x in re.sub(pattern, replacer, source).split('\n'):
+        if x.strip()!="":
+            temp.append(x)
+    return '\n'.join(temp)
+
+
+def build_dataset(bug_file):
+    train, test, vaild, codebase = [], [], [], []
+    with open(bug_file, 'r', encoding='utf-8') as f:
+        data = f.readlines()
+        idx = int(len(data)*0.2)
+        train = data[:idx]
+        test = data[idx:idx+1000]
+        vaild = data[idx:idx+1000]
+        codebase = data
+    
+    with open('dataset/java/train.jsonl', 'w', encoding='utf-8') as f:
+        f.writelines(train)
+    with open('dataset/java/test.jsonl', 'w', encoding='utf-8') as f:
+        f.writelines(test)
+    with open('dataset/java/vaild.jsonl', 'w', encoding='utf-8') as f:
+        f.writelines(vaild)
+    with open('dataset/java/codebase.jsonl', 'w', encoding='utf-8') as f:
+        f.writelines(codebase)
+    
+    os.system("\cp -r dataset/java /home/zander/JIT-DP/CodeBERT/GraphCodeBERT/codesearch/dataset/")
+
 
 
 if __name__ == "__main__":
     bug_file, fix_file = 'bug_chunk.txt', 'fix_chunk.txt'
-    bug_loca_file, fix_loca_file = 'bug_location.txt', 'fix_location.txt'
     os.system('rm {} {}'.format(bug_file, fix_file))
-    os.system('rm {} {}'.format(bug_loca_file, fix_loca_file))
 
     dataset_path = '../BugFixDataset/'
     pre_paths = ['Partation1', 'Partation2', 'Partation3', 'Partation4', 'Partation5']
@@ -224,9 +277,11 @@ if __name__ == "__main__":
     for pre_path in pre_paths:
         file_paths = subprocess.check_output(['ls', pre_path])
         file_paths = file_paths.decode('utf-8').strip().split('\n')
-        # file_paths = file_paths[:100]
+        # file_paths = file_paths[:1000]
 
         for path in tqdm(file_paths):
             process_one_bugfix('./{}/{}/'.format(pre_path, path))
 
-        combine_data(pre_path, file_paths, bug_file, fix_file, bug_loca_file, fix_loca_file)
+        combine_data(pre_path, file_paths, bug_file, fix_file)
+    
+    build_dataset(bug_file)
