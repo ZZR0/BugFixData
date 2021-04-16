@@ -9,3 +9,4 @@ bugfix
 .vscode
 __pycache__
 *.txt
+dataset
